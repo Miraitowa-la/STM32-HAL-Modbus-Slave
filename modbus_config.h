@@ -1,53 +1,94 @@
-/*
- * modbus_config.h
- * Modbus Slave Configuration File
+/**
+ * @file    modbus_config.h
+ * @brief   Modbus从站配置文件
+ * @details 包含硬件接口、通信参数、寄存器数量等可配置项
  */
 
 #ifndef MODBUS_CONFIG_H
 #define MODBUS_CONFIG_H
 
-#include "main.h" // 确保包含HAL库定义和UART句柄
+#include "main.h"  /* 包含HAL库定义及UART句柄声明 */
 
-// ================= 硬件配置 =================
-// 指定使用的UART句柄，例如 &huart1
-extern UART_HandleTypeDef 			huart2;
+/* ============================================================================
+ *                              硬件接口配置
+ * ============================================================================ */
+
+/**
+ * @brief   Modbus通信使用的UART句柄
+ * @note    需与CubeMX中配置的UART实例保持一致，如 &huart1、&huart2 等
+ */
+extern UART_HandleTypeDef huart2;
 #define MODBUS_UART_HANDLE      &huart2
 
-// ================= 物理层接口配置 =================
-// 0: RS232 或 TTL (无流控引脚，全双工/透明传输)
-// 1: RS485 (半双工，需要控制 DE/RE 引脚)
+/* ============================================================================
+ *                              物理层接口配置
+ * ============================================================================ */
+
+/**
+ * @brief   物理层接口类型选择
+ * @arg     0: RS232/TTL模式（全双工，无需方向控制）
+ * @arg     1: RS485模式（半双工，需控制DE/RE引脚）
+ */
 #define MODBUS_USE_RS485        1
 
-// --- 仅当 MODBUS_USE_RS485 为 1 时需要配置以下内容 ---
-// 请在 CubeMX 中将该引脚配置为 GPIO_Output
+/**
+ * @brief   RS485收发控制引脚配置
+ * @note    仅在 MODBUS_USE_RS485 = 1 时生效
+ *          请在CubeMX中将该引脚配置为GPIO_Output模式
+ */
 #define RS485_PORT              GPIOD
 #define RS485_PIN               GPIO_PIN_7
 
-// RS485 逻辑电平定义 (通常: High=发送, Low=接收)
+/**
+ * @brief   RS485收发方向控制宏
+ * @note    根据实际硬件电路调整电平逻辑
+ *          典型设计：高电平=发送使能，低电平=接收使能
+ */
 #define RS485_TX_ENABLE()       HAL_GPIO_WritePin(RS485_PORT, RS485_PIN, GPIO_PIN_SET)
 #define RS485_RX_ENABLE()       HAL_GPIO_WritePin(RS485_PORT, RS485_PIN, GPIO_PIN_RESET)
 
-// ================= Flash 存储配置 =================
-// 请根据你的STM32型号选择一个扇区或页面的起始地址用于存储配置
-// 注意：该地址的数据在修改波特率/地址时会被擦除！
-// 示例 (STM32F103C8T6 最后一页): 0x0800F800
-// 示例 (STM32F407 扇区11): 0x080E0000
+/* ============================================================================
+ *                              Flash存储配置
+ * ============================================================================ */
+
+/**
+ * @brief   配置参数存储的Flash地址
+ * @warning 该地址所在页/扇区的数据会在保存配置时被擦除
+ * @note    请根据芯片型号选择合适的地址：
+ *          - STM32F103C8T6 (64KB Flash): 最后1KB页 = 0x0800FC00
+ *          - STM32F103RCT6 (256KB Flash): 最后1KB页 = 0x0803FC00
+ *          - STM32F407VET6 (512KB Flash): 扇区11 = 0x080E0000
+ */
 #define MODBUS_FLASH_ADDR       0x0800F800
 
-// ================= Modbus 默认参数 =================
-// 当Flash第一次使用或校验失败时使用的默认值
-#define DEFAULT_SLAVE_ADDR      0x01
-#define DEFAULT_BAUD_RATE       9600
+/* ============================================================================
+ *                              Modbus默认参数
+ * ============================================================================ */
 
-// ================= 寄存器数量配置 =================
-// 定义各区的最大数量
-#define MB_COIL_COUNT           8   // 线圈 (0xxxx)
-#define MB_DISCRETE_COUNT       8   // 离散输入 (1xxxx)
-#define MB_HOLDING_REG_COUNT    8   // 保持寄存器 (4xxxx)
-#define MB_INPUT_REG_COUNT      8   // 输入寄存器 (3xxxx)
+/**
+ * @brief   Flash首次使用或校验失败时的默认配置
+ */
+#define DEFAULT_SLAVE_ADDR      0x01    /* 默认从站地址 (有效范围: 1~247) */
+#define DEFAULT_BAUD_RATE       9600    /* 默认波特率 */
 
-// 接收/发送缓冲区大小
+/* ============================================================================
+ *                              寄存器容量配置
+ * ============================================================================ */
+
+/**
+ * @brief   各类型寄存器/线圈的最大数量
+ * @note    设为0可禁用对应功能码，减少代码体积
+ */
+#define MB_COIL_COUNT           8   /* 线圈数量 (功能码: 01/05/0F) */
+#define MB_DISCRETE_COUNT       8   /* 离散输入数量 (功能码: 02) */
+#define MB_HOLDING_REG_COUNT    8   /* 保持寄存器数量 (功能码: 03/06/10) */
+#define MB_INPUT_REG_COUNT      8   /* 输入寄存器数量 (功能码: 04) */
+
+/**
+ * @brief   通信缓冲区大小
+ * @note    应大于最大Modbus帧长度，256字节足以满足标准协议需求
+ */
 #define MB_RX_BUF_SIZE          256
 #define MB_TX_BUF_SIZE          256
 
-#endif // MODBUS_CONFIG_H
+#endif /* MODBUS_CONFIG_H */

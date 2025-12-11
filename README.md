@@ -25,6 +25,7 @@ A lightweight Modbus RTU slave protocol stack based on STM32 HAL library. Suppor
 ### Hardware Compatibility
 *   Supports **RS485** (automatic DE/RE pin control) and **RS232/TTL** (transparent transmission), switch via macro definition
 *   Based on `HAL_UARTEx_ReceiveToIdle_IT` idle interrupt reception, handles variable-length data frames without DMA
+*   Supports broadcast address 0xFF for emergency device recovery
 *   Compatible with all STM32 series (F0/F1/F4/L0/G0, etc.)
 
 ## 📂 File Structure
@@ -68,31 +69,33 @@ Add the following files to your STM32 project:
 Open `modbus_config.h` and modify the following parameters according to your actual hardware:
 
 ```c
-// ================= Hardware Configuration =================
+/* ============= Hardware Configuration ============= */
 // 1. Specify UART handle (must be declared in main.h)
-extern UART_HandleTypeDef huart1;
-#define MODBUS_UART_HANDLE      &huart1
+extern UART_HandleTypeDef huart2;
+#define MODBUS_UART_HANDLE      &huart2
 
-// ================= Flash Storage Configuration =================
+/* ============= Flash Storage Configuration ============= */
 // 2. Specify Flash storage address (⚠️ Very important!)
-// Please refer to chip datasheet to ensure the address is an unused page and won't overwrite program code
-// STM32F103C8T6 (64KB Flash) last page: 0x0800F800
-// STM32F407 (1MB Flash) Sector 11: 0x080E0000
+// Please refer to chip datasheet to ensure the address is an unused page
+// STM32F103C8T6 (64KB Flash) last page: 0x0800FC00
+// STM32F103RCT6 (256KB Flash) last page: 0x0803FC00
+// STM32F407VET6 (512KB Flash) Sector 11: 0x080E0000
 #define MODBUS_FLASH_ADDR       0x0800F800
 
-// ================= Physical Layer Interface Configuration =================
+/* ============= Physical Layer Interface Configuration ============= */
 // 3. RS485 mode switch
 #define MODBUS_USE_RS485        1    // 1=Enable, 0=Disable (use RS232/TTL)
 
 // 4. RS485 control pins (only valid when MODBUS_USE_RS485 is 1)
-#define RS485_PORT              GPIOA
-#define RS485_PIN               GPIO_PIN_8
+#define RS485_PORT              GPIOD
+#define RS485_PIN               GPIO_PIN_7
 ```
 
 > **💡 Flash Address Selection Recommendations**
 > - Choose the last page or sector of the chip to avoid conflicts with program code
 > - Confirm the address is unused in the linker script
-> - F1 series divided by pages, F4 series divided by sectors
+> - F1 series: divided by pages (1KB or 2KB per page depending on chip)
+> - F4 series: divided by sectors (16KB~128KB per sector)
 
 ### 4. Write Application Code
 
@@ -206,11 +209,11 @@ The following global arrays are defined in `modbus_slave.h`, directly operate th
 ```c
 // Coils - 0xxxx area
 // Bit-packed storage, read/write
-extern uint8_t mb_coils[MB_COIL_COUNT / 8 + 1];
+extern uint8_t mb_coils[(MB_COIL_COUNT + 7) / 8];
 
 // Discrete Inputs - 1xxxx area
 // Bit-packed storage, read-only
-extern uint8_t mb_discrete_inputs[MB_DISCRETE_COUNT / 8 + 1];
+extern uint8_t mb_discrete_inputs[(MB_DISCRETE_COUNT + 7) / 8];
 
 // Holding Registers - 4xxxx area
 // 16-bit registers, read/write
