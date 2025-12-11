@@ -506,13 +506,24 @@ static void Flash_LoadConfig(void) {
  * @brief   保存配置参数到Flash
  * @param   addr   新的从站地址
  * @param   baud   新的波特率
+ * @note    为延长Flash寿命，只在数据确实改变时才执行写入操作
  * @warning Flash写入操作会暂停CPU执行，生产环境建议关闭中断或从RAM执行
+ *          频繁调用此函数会迅速消耗Flash擦写寿命(通常1万-10万次)
  */
 static void Flash_SaveConfig(uint8_t addr, uint32_t baud) {
     ModbusConfig_t new_config;
     new_config.magic_key = FLASH_MAGIC_KEY;
     new_config.slave_addr = addr;
     new_config.baud_rate = baud;
+
+    /* 为延长Flash寿命，先读取当前Flash内容进行比较 */
+    ModbusConfig_t *pCurrentConfig = (ModbusConfig_t *)MODBUS_FLASH_ADDR;
+    if (pCurrentConfig->magic_key == FLASH_MAGIC_KEY &&
+        pCurrentConfig->slave_addr == addr &&
+        pCurrentConfig->baud_rate == baud) {
+        /* 数据未改变，无需写入Flash */
+        return;
+    }
 
     HAL_FLASH_Unlock();
 
@@ -533,8 +544,19 @@ static void Flash_SaveConfig(uint8_t addr, uint32_t baud) {
         EraseInitStruct.Sector = FLASH_SECTOR_11;
         EraseInitStruct.NbSectors = 1;
         EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+    #elif defined(STM32G0) || defined(STM32G4) || defined(STM32L4) || defined(STM32L5)
+        /* STM32G0/G4/L4/L5系列: 按页擦除 */
+        EraseInitStruct.TypeErase = FLASH_TYPEERASE_PAGES;
+        EraseInitStruct.PageAddress = MODBUS_FLASH_ADDR;
+        EraseInitStruct.NbPages = 1;
+    #elif defined(STM32H7)
+        /* STM32H7系列: 按扇区擦除 */
+        EraseInitStruct.TypeErase = FLASH_TYPEERASE_SECTORS;
+        EraseInitStruct.Sector = FLASH_SECTOR_11;  /* 根据实际情况调整 */
+        EraseInitStruct.NbSectors = 1;
+        EraseInitStruct.VoltageRange = FLASH_VOLTAGE_RANGE_3;
     #else
-        /* 默认按页擦除 (适用于F0/G0/L0等系列) */
+        /* 默认按页擦除 (适用于F0/L0等系列) */
         EraseInitStruct.TypeErase = FLASH_TYPEERASE_PAGES;
         EraseInitStruct.PageAddress = MODBUS_FLASH_ADDR;
         EraseInitStruct.NbPages = 1;

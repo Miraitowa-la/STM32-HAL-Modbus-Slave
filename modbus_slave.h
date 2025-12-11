@@ -32,6 +32,7 @@
 /**
  * @brief   Flash存储的配置参数结构体
  * @note    结构体大小需为4字节对齐，便于Flash按字写入
+ * @warning Flash写入操作会暂停CPU执行，频繁写入会消耗Flash寿命
  */
 typedef struct {
     uint32_t magic_key;     /* 魔数标识，用于判断Flash数据有效性 (0xDEADBEEF) */

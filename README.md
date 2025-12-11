@@ -96,6 +96,11 @@ extern UART_HandleTypeDef huart2;
 > - Confirm the address is unused in the linker script
 > - F1 series: divided by pages (1KB or 2KB per page depending on chip)
 > - F4 series: divided by sectors (16KB~128KB per sector)
+>
+> **⚠️ Flash Lifespan Warning**
+> - Flash memory has limited write/erase cycles (typically 10K-100K cycles)
+> - Avoid frequent use of function code 0x64 to prevent premature Flash wear-out
+> - The implementation includes data comparison to minimize unnecessary writes
 
 ### 4. Write Application Code
 
@@ -246,6 +251,11 @@ if (mb_coils[0] & 0x01) {
 *   **Must ensure** `MODBUS_FLASH_ADDR` points to an address without program code
 *   Recommended to use **last page/sector** of Flash
 *   Refer to chip datasheet to confirm page/sector addresses
+
+### Flash Operation Optimization
+*   **Data Comparison**: Before writing to Flash, the system compares current values to prevent unnecessary writes and extend Flash lifespan
+*   **Compatibility**: Enhanced Flash erase/program operations support more STM32 series (F1, F4, G0, G4, L4, L5, H7)
+*   **Performance Note**: Flash operations stall the CPU during execution. Frequent use of function code 0x64 can quickly consume Flash write/erase cycles (typically 10K-100K cycles)
 
 ### Interrupt Priority
 *   Modbus communication depends on UART interrupt
