@@ -457,6 +457,7 @@ void Modbus_Process(void) {
 /**
  * @brief   发送Modbus响应帧
  * @param   len   数据部分长度(不含CRC)
+ * @note    超时时间根据波特率和数据长度动态计算，避免低波特率发送失败
  */
 static void Modbus_SendResponse(uint16_t len) {
     /* 计算并追加CRC校验码 */
@@ -465,13 +466,25 @@ static void Modbus_SendResponse(uint16_t len) {
     hmodbus.tx_buf[len + 1] = (crc >> 8) & 0xFF;
     uint16_t total_len = len + 2;
 
+    /* 动态计算发送超时时间 (ms)
+     * 公式: timeout = (字节数 * 10位 * 1000ms) / 波特率 + 安全余量
+     * 10位 = 1起始位 + 8数据位 + 1停止位
+     * 安全余量: +50ms 或 +10% (取较大值) */
+    uint32_t tx_time_ms = ((uint32_t)total_len * 10 * 1000) / hmodbus.config.baud_rate;
+    uint32_t margin = (tx_time_ms / 10) > 50 ? (tx_time_ms / 10) : 50;
+    uint32_t timeout = tx_time_ms + margin;
+    
+    /* 确保最小超时时间为100ms */
+    if (timeout < 100) timeout = 100;
+
     /* RS485方向控制: 切换为发送模式 */
     #if MODBUS_USE_RS485 == 1
         RS485_TX_ENABLE();
     #endif
 
-    /* 阻塞式发送，确保数据完整发出 */
-    HAL_UART_Transmit(hmodbus.huart, hmodbus.tx_buf, total_len, 100);
+    /* 阻塞式发送，确保数据完整发出
+     * 超时时间动态计算，不会因低波特率导致发送失败 */
+    HAL_UART_Transmit(hmodbus.huart, hmodbus.tx_buf, total_len, timeout);
 
     /* RS485方向控制: 等待发送完成后切回接收模式 */
     #if MODBUS_USE_RS485 == 1

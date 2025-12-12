@@ -266,6 +266,14 @@ if (mb_coils[0] & 0x01) {
     - No data loss even with high-frequency communication
 *   **Benefit**: Eliminates buffer corruption during back-to-back Modbus requests
 
+### Dynamic Transmission Timeout
+*   **Problem Solved**: Hardcoded 100ms timeout causes transmission failures at low baud rates
+*   **Issue**: At 1200 baud, sending 256 bytes requires ~2.1 seconds, exceeding the fixed 100ms timeout
+*   **Solution**: Timeout is dynamically calculated based on baud rate and data length
+*   **Formula**: `timeout_ms = (bytes * 10 bits * 1000) / baud_rate + safety_margin`
+*   **Safety Margin**: Max of 50ms or 10% of transmission time, minimum timeout is 100ms
+*   **Benefit**: Reliable transmission at all supported baud rates (1200~115200)
+
 ### Interrupt Priority
 *   Modbus communication depends on UART interrupt
 *   Ensure UART interrupt priority is set reasonably to avoid being blocked by other high-priority interrupts
