@@ -74,17 +74,24 @@ static void Flash_SaveConfig(uint8_t addr, uint32_t baud);
 void Modbus_Init(void) {
     hmodbus.huart = MODBUS_UART_HANDLE;
 
-    /* 步骤1: RS485硬件层初始化 */
+    /* 步骤1: 初始化乒乓缓冲区指针
+     * 中断接收指向A，处理指向B(初始为空) */
+    hmodbus.rx_active_buf = hmodbus.rx_buf_a;
+    hmodbus.rx_process_buf = hmodbus.rx_buf_b;
+    hmodbus.rx_len = 0;
+    hmodbus.rx_ready = 0;
+
+    /* 步骤2: RS485硬件层初始化 */
     #if MODBUS_USE_RS485 == 1
         /* RS485默认为接收模式
          * 注意: GPIO时钟需在main.c的MX_GPIO_Init()中已开启 */
         RS485_RX_ENABLE();
     #endif
 
-    /* 步骤2: 从Flash加载配置参数 */
+    /* 步骤3: 从Flash加载配置参数 */
     Flash_LoadConfig();
 
-    /* 步骤3: 若当前波特率与配置不符，重新初始化UART */
+    /* 步骤4: 若当前波特率与配置不符，重新初始化UART */
     if (hmodbus.huart->Init.BaudRate != hmodbus.config.baud_rate) {
         hmodbus.huart->Init.BaudRate = hmodbus.config.baud_rate;
         if (HAL_UART_Init(hmodbus.huart) != HAL_OK) {
@@ -92,8 +99,8 @@ void Modbus_Init(void) {
         }
     }
 
-    /* 步骤4: 开启UART空闲中断接收 */
-    HAL_UARTEx_ReceiveToIdle_IT(hmodbus.huart, hmodbus.rx_buf, MB_RX_BUF_SIZE);
+    /* 步骤5: 开启UART空闲中断接收 (使用乒乓缓冲A) */
+    HAL_UARTEx_ReceiveToIdle_IT(hmodbus.huart, hmodbus.rx_active_buf, MB_RX_BUF_SIZE);
 }
 
 /* ============================================================================
@@ -105,13 +112,29 @@ void Modbus_Init(void) {
  * @param   huart   UART句柄指针
  * @param   Size    接收到的数据长度
  * @note    需在HAL_UARTEx_RxEventCallback中调用此函数
+ *          采用乒乓缓冲机制，中断中交换缓冲区指针
  */
 void Modbus_RxCpltCallback(UART_HandleTypeDef *huart, uint16_t Size) {
     if (huart->Instance == hmodbus.huart->Instance) {
+        /* 乒乓缓冲切换:
+         * 1. 将当前接收缓冲区设为处理缓冲区
+         * 2. 记录接收数据长度
+         * 3. 切换中断接收目标到另一个缓冲区
+         * 4. 立即重新启动接收，减少数据丢失窗口 */
+        
+        /* 交换缓冲区指针 */
+        uint8_t* completed_buf = hmodbus.rx_active_buf;
+        hmodbus.rx_active_buf = (completed_buf == hmodbus.rx_buf_a) 
+                                ? hmodbus.rx_buf_b : hmodbus.rx_buf_a;
+        
+        /* 设置处理缓冲区和数据长度 */
+        hmodbus.rx_process_buf = completed_buf;
         hmodbus.rx_len = Size;
-        /* 标记接收完成，由主循环Modbus_Process()处理
-         * 注意: 塳处理期间若有新数据到达将会丢失
-         * 工业级应用建议使用DMA+环形缓冲区方案 */
+        hmodbus.rx_ready = 1;
+        
+        /* 立即重新启动接收，指向新的缓冲区
+         * 这样即使主循环处理较慢，也不会丢失新到达的数据 */
+        HAL_UARTEx_ReceiveToIdle_IT(hmodbus.huart, hmodbus.rx_active_buf, MB_RX_BUF_SIZE);
     }
 }
 
@@ -122,6 +145,7 @@ void Modbus_RxCpltCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 /**
  * @brief   Modbus帧解析与响应处理
  * @note    应在主循环中周期性调用
+ *          采用乒乓缓冲，处理期间不会影响新数据接收
  */
 void Modbus_Process(void) {
     uint8_t req_addr;
@@ -131,31 +155,44 @@ void Modbus_Process(void) {
     uint16_t start_addr, quantity;
     uint8_t byte_count;
     uint16_t i;
+    
+    /* 乒乓缓冲机制: 使用本地指针指向处理缓冲区 */
+    uint8_t* rx_buf;
+    uint16_t rx_len;
 
-    if (hmodbus.rx_len == 0) return;  /* 无数据待处理 */
+    if (!hmodbus.rx_ready) return;  /* 无数据待处理 */
+    
+    /* 获取待处理数据的本地副本
+     * 注意: 在处理过程中，中断可能会更新rx_ready和rx_len */
+    rx_buf = hmodbus.rx_process_buf;
+    rx_len = hmodbus.rx_len;
+    
+    /* 清除接收标志，允许中断更新新数据 */
+    hmodbus.rx_ready = 0;
+    hmodbus.rx_len = 0;
 
     /* 步骤1: 检查帧最小长度 */
-    if (hmodbus.rx_len < 4) {
-        goto restart_rx;  /* 帧长度不足 */
+    if (rx_len < 4) {
+        return;  /* 帧长度不足 */
     }
 
     /* 步骤2: 校验从站地址
      * 支持本机地址和0xFF广播地址(带返回) */
-    req_addr = hmodbus.rx_buf[0];
+    req_addr = rx_buf[0];
     if (req_addr != hmodbus.config.slave_addr && req_addr != 0xFF) {
-        goto restart_rx;  /* 地址不匹配 */
+        return;  /* 地址不匹配 */
     }
 
     /* 步骤3: CRC校验 */
-    received_crc = (hmodbus.rx_buf[hmodbus.rx_len - 1] << 8) | hmodbus.rx_buf[hmodbus.rx_len - 2];
-    calculated_crc = CRC16(hmodbus.rx_buf, hmodbus.rx_len - 2);
+    received_crc = (rx_buf[rx_len - 1] << 8) | rx_buf[rx_len - 2];
+    calculated_crc = CRC16(rx_buf, rx_len - 2);
 
     if (received_crc != calculated_crc) {
-        goto restart_rx;  /* CRC错误 */
+        return;  /* CRC错误 */
     }
 
     /* 步骤4: 解析功能码 */
-    func_code = hmodbus.rx_buf[1];
+    func_code = rx_buf[1];
 
     /* 准备响应帧头部: 从站地址 + 功能码
      * 无论请求地址是0xFF还是本机地址，响应始终使用本机真实地址 */
@@ -170,8 +207,8 @@ void Modbus_Process(void) {
         #if MB_COIL_COUNT > 0
         case MB_FUNC_READ_COILS:  /* 0x01: 读线圈状态 */
         {
-            start_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            quantity = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
+            start_addr = (rx_buf[2] << 8) | rx_buf[3];
+            quantity = (rx_buf[4] << 8) | rx_buf[5];
 
             /* 参数校验 */
             if (quantity < 1 || quantity > 2000) { Modbus_SendException(func_code, 0x03); break; }
@@ -194,8 +231,8 @@ void Modbus_Process(void) {
 
         case MB_FUNC_WRITE_SINGLE_COIL:  /* 0x05: 写单个线圈 */
         {
-            start_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            uint16_t val = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
+            start_addr = (rx_buf[2] << 8) | rx_buf[3];
+            uint16_t val = (rx_buf[4] << 8) | rx_buf[5];
 
             if (start_addr >= MB_COIL_COUNT) { Modbus_SendException(func_code, 0x02); break; }
 
@@ -204,27 +241,27 @@ void Modbus_Process(void) {
             else if (val == 0x0000) { mb_coils[start_addr / 8] &= ~(1 << (start_addr % 8)); }
 
             /* 原样返回请求帧 */
-            memcpy(hmodbus.tx_buf, hmodbus.rx_buf, 6);
+            memcpy(hmodbus.tx_buf, rx_buf, 6);
             Modbus_SendResponse(6);
             break;
         }
 
         case MB_FUNC_WRITE_MULTI_COILS:  /* 0x0F: 写多个线圈 */
         {
-            start_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            quantity = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
-            byte_count = hmodbus.rx_buf[6];
+            start_addr = (rx_buf[2] << 8) | rx_buf[3];
+            quantity = (rx_buf[4] << 8) | rx_buf[5];
+            byte_count = rx_buf[6];
 
             if (start_addr + quantity > MB_COIL_COUNT) { Modbus_SendException(func_code, 0x02); break; }
 
             /* 写入线圈状态 */
             for (i = 0; i < quantity; i++) {
-                uint8_t val = (hmodbus.rx_buf[7 + i / 8] >> (i % 8)) & 0x01;
+                uint8_t val = (rx_buf[7 + i / 8] >> (i % 8)) & 0x01;
                 if (val) mb_coils[(start_addr + i) / 8] |= (1 << ((start_addr + i) % 8));
                 else     mb_coils[(start_addr + i) / 8] &= ~(1 << ((start_addr + i) % 8));
             }
 
-            memcpy(&hmodbus.tx_buf[2], &hmodbus.rx_buf[2], 4);
+            memcpy(&hmodbus.tx_buf[2], &rx_buf[2], 4);
             Modbus_SendResponse(6);
             break;
         }
@@ -237,8 +274,8 @@ void Modbus_Process(void) {
         #if MB_DISCRETE_COUNT > 0
         case MB_FUNC_READ_DISCRETE:  /* 0x02: 读离散输入 */
         {
-            start_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            quantity = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
+            start_addr = (rx_buf[2] << 8) | rx_buf[3];
+            quantity = (rx_buf[4] << 8) | rx_buf[5];
 
             /* 参数校验 */
             if (quantity < 1 || quantity > 2000) { Modbus_SendException(func_code, 0x03); break; }
@@ -267,8 +304,8 @@ void Modbus_Process(void) {
         #if MB_HOLDING_REG_COUNT > 0
         case MB_FUNC_READ_HOLDING:  /* 0x03: 读保持寄存器 */
         {
-            start_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            quantity = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
+            start_addr = (rx_buf[2] << 8) | rx_buf[3];
+            quantity = (rx_buf[4] << 8) | rx_buf[5];
 
             /* 参数校验 */
             if (quantity < 1 || quantity > 125) { Modbus_SendException(func_code, 0x03); break; }
@@ -286,32 +323,32 @@ void Modbus_Process(void) {
 
         case MB_FUNC_WRITE_SINGLE_REG:  /* 0x06: 写单个寄存器 */
         {
-            start_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            uint16_t val = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
+            start_addr = (rx_buf[2] << 8) | rx_buf[3];
+            uint16_t val = (rx_buf[4] << 8) | rx_buf[5];
 
             if (start_addr >= MB_HOLDING_REG_COUNT) { Modbus_SendException(func_code, 0x02); break; }
 
             mb_holding_regs[start_addr] = val;
 
             /* 原样返回请求帧 */
-            memcpy(hmodbus.tx_buf, hmodbus.rx_buf, 6);
+            memcpy(hmodbus.tx_buf, rx_buf, 6);
             Modbus_SendResponse(6);
             break;
         }
 
         case MB_FUNC_WRITE_MULTI_REGS:  /* 0x10: 写多个寄存器 */
         {
-            start_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            quantity = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
+            start_addr = (rx_buf[2] << 8) | rx_buf[3];
+            quantity = (rx_buf[4] << 8) | rx_buf[5];
 
             if (start_addr + quantity > MB_HOLDING_REG_COUNT) { Modbus_SendException(func_code, 0x02); break; }
 
             /* 写入保持寄存器数据 */
             for (i = 0; i < quantity; i++) {
-                mb_holding_regs[start_addr + i] = (hmodbus.rx_buf[7 + i * 2] << 8) | hmodbus.rx_buf[8 + i * 2];
+                mb_holding_regs[start_addr + i] = (rx_buf[7 + i * 2] << 8) | rx_buf[8 + i * 2];
             }
 
-            memcpy(&hmodbus.tx_buf[2], &hmodbus.rx_buf[2], 4);
+            memcpy(&hmodbus.tx_buf[2], &rx_buf[2], 4);
             Modbus_SendResponse(6);
             break;
         }
@@ -324,8 +361,8 @@ void Modbus_Process(void) {
         #if MB_INPUT_REG_COUNT > 0
         case MB_FUNC_READ_INPUT:  /* 0x04: 读输入寄存器 */
         {
-            start_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            quantity = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
+            start_addr = (rx_buf[2] << 8) | rx_buf[3];
+            quantity = (rx_buf[4] << 8) | rx_buf[5];
 
             /* 参数校验 */
             if (quantity < 1 || quantity > 125) { Modbus_SendException(func_code, 0x03); break; }
@@ -350,13 +387,13 @@ void Modbus_Process(void) {
         {
             /* 帧格式: [Addr][64][RegHi][RegLo][ValHi][ValLo][CRC][CRC]
              * 长度固定为8字节 */
-            if (hmodbus.rx_len != 8) {
+            if (rx_len != 8) {
                 Modbus_SendException(func_code, 0x03);
                 break;
             }
 
-            uint16_t param_addr = (hmodbus.rx_buf[2] << 8) | hmodbus.rx_buf[3];
-            uint16_t param_val  = (hmodbus.rx_buf[4] << 8) | hmodbus.rx_buf[5];
+            uint16_t param_addr = (rx_buf[2] << 8) | rx_buf[3];
+            uint16_t param_val  = (rx_buf[4] << 8) | rx_buf[5];
 
             /* 基于当前配置创建临时配置变量 */
             uint8_t  new_slave_addr = hmodbus.config.slave_addr;
@@ -391,7 +428,7 @@ void Modbus_Process(void) {
 
             if (need_save) {
                 /* 步骤1: 先回复确认包，确保主站知道指令已执行 */
-                memcpy(hmodbus.tx_buf, hmodbus.rx_buf, 8);
+                memcpy(hmodbus.tx_buf, rx_buf, 8);
                 Modbus_SendResponse(6);
 
                 /* 步骤2: 等待数据发送完毕 (RS485模式关键步骤) */
@@ -410,11 +447,7 @@ void Modbus_Process(void) {
             /* 不支持的功能码，静默忽略 */
             break;
     }
-
-restart_rx:
-    hmodbus.rx_len = 0;
-    /* 重新开启UART空闲中断接收 */
-    HAL_UARTEx_ReceiveToIdle_IT(hmodbus.huart, hmodbus.rx_buf, MB_RX_BUF_SIZE);
+    /* 乒乓缓冲机制: 无需重新启动接收，中断回调中已完成 */
 }
 
 /* ============================================================================

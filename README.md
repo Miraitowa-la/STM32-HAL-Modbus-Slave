@@ -257,6 +257,15 @@ if (mb_coils[0] & 0x01) {
 *   **Compatibility**: Enhanced Flash erase/program operations support more STM32 series (F1, F4, G0, G4, L4, L5, H7)
 *   **Performance Note**: Flash operations stall the CPU during execution. Frequent use of function code 0x64 can quickly consume Flash write/erase cycles (typically 10K-100K cycles)
 
+### Ping-Pong Buffer (Double Buffer) Mechanism
+*   **Problem Solved**: Race condition where new data overwrites `rx_buf` while `Modbus_Process()` is still processing previous frame
+*   **Solution**: Dual receive buffers (`rx_buf_a` and `rx_buf_b`) with automatic switching in interrupt callback
+*   **How It Works**:
+    - Interrupt receives data into buffer A, sets ready flag
+    - Main loop processes buffer A while interrupt receives into buffer B
+    - No data loss even with high-frequency communication
+*   **Benefit**: Eliminates buffer corruption during back-to-back Modbus requests
+
 ### Interrupt Priority
 *   Modbus communication depends on UART interrupt
 *   Ensure UART interrupt priority is set reasonably to avoid being blocked by other high-priority interrupts

@@ -44,12 +44,17 @@ typedef struct {
 /**
  * @brief   Modbus从站核心句柄结构体
  * @note    包含UART句柄、收发缓冲区及运行时配置
+ *          采用乒乓缓冲(双缓冲)机制，解决接收与处理的竞争问题
  */
 typedef struct {
     UART_HandleTypeDef* huart;              /* UART外设句柄 */
-    uint8_t rx_buf[MB_RX_BUF_SIZE];         /* 接收缓冲区 */
+    uint8_t rx_buf_a[MB_RX_BUF_SIZE];       /* 接收缓冲区A (乒乓缓冲) */
+    uint8_t rx_buf_b[MB_RX_BUF_SIZE];       /* 接收缓冲区B (乒乓缓冲) */
     uint8_t tx_buf[MB_TX_BUF_SIZE];         /* 发送缓冲区 */
-    uint16_t rx_len;                        /* 当前接收数据长度 */
+    uint8_t* volatile rx_active_buf;        /* 当前中断接收目标缓冲区指针 */
+    uint8_t* volatile rx_process_buf;       /* 当前待处理数据缓冲区指针 */
+    volatile uint16_t rx_len;               /* 待处理数据长度 (0表示无数据) */
+    volatile uint8_t rx_ready;              /* 接收完成标志 (1=有数据待处理) */
     ModbusConfig_t config;                  /* 运行时配置参数 */
 } ModbusHandle_t;
 
