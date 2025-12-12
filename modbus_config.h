@@ -105,4 +105,20 @@ extern UART_HandleTypeDef huart2;
  */
 #define MODBUS_CRC_USE_TABLE    0
 
+/* ============================================================================
+ *                              发送模式配置
+ * ============================================================================ */
+
+/**
+ * @brief   UART发送模式选择
+ * @arg     0: 阻塞模式 (默认) - 简单可靠，但发送期间CPU占用100%
+ * @arg     1: DMA模式 - 释放CPU，发送期间可执行其他任务
+ * @note    选择建议:
+ *          - 简单应用/调试阶段: 使用阻塞模式 (0)
+ *          - 实时性要求高: 使用DMA模式 (1)
+ * @warning DMA模式需在CubeMX中配置USART TX DMA，
+ *          并在main.c中添加HAL_UART_TxCpltCallback回调
+ */
+#define MODBUS_USE_DMA_TX       0
+
 #endif /* MODBUS_CONFIG_H */

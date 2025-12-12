@@ -116,4 +116,18 @@ void Modbus_Process(void);
  */
 void Modbus_RxCpltCallback(UART_HandleTypeDef *huart, uint16_t Size);
 
+#if MODBUS_USE_DMA_TX == 1
+/**
+ * @brief   UART发送完成回调函数 (DMA模式专用)
+ * @param   huart   UART句柄指针
+ * @note    仅在DMA发送模式下需要，用于RS485方向切换
+ *          需在 HAL_UART_TxCpltCallback() 中调用此函数
+ *          示例:
+ *          void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+ *              Modbus_TxCpltCallback(huart);
+ *          }
+ */
+void Modbus_TxCpltCallback(UART_HandleTypeDef *huart);
+#endif
+
 #endif /* MODBUS_SLAVE_H */

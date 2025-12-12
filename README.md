@@ -286,6 +286,40 @@ if (mb_coils[0] & 0x01) {
     - Bit-shift: ~1.5ms
     - Lookup table: ~0.15ms
 
+### Transmission Mode Selection (Blocking vs DMA)
+*   **Configuration**: Set `MODBUS_USE_DMA_TX` in `modbus_config.h`
+*   **Options**:
+    - `0` (Default): **Blocking mode** - Simple and reliable, CPU waits during transmission
+    - `1`: **DMA mode** - Frees CPU, allows other tasks during transmission
+*   **Recommendations**:
+    - Simple applications or debugging: Use blocking mode (0)
+    - Real-time requirements: Use DMA mode (1)
+*   **DMA Mode Requirements**:
+    - Configure USART TX DMA in CubeMX
+    - Add `HAL_UART_TxCpltCallback` in main.c (see example below)
+
+#### main.c Example - Blocking Mode (Default)
+```c
+/* USER CODE BEGIN 4 */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
+    Modbus_RxCpltCallback(huart, Size);
+}
+/* USER CODE END 4 */
+```
+
+#### main.c Example - DMA Mode
+```c
+/* USER CODE BEGIN 4 */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
+    Modbus_RxCpltCallback(huart, Size);
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+    Modbus_TxCpltCallback(huart);  // Required for RS485 direction control
+}
+/* USER CODE END 4 */
+```
+
 ### Interrupt Priority
 *   Modbus communication depends on UART interrupt
 *   Ensure UART interrupt priority is set reasonably to avoid being blocked by other high-priority interrupts

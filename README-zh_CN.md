@@ -286,6 +286,40 @@ if (mb_coils[0] & 0x01) {
     - 移位法: 约1.5ms
     - 查表法: 约0.15ms
 
+### 发送模式选择 (阻塞模式 vs DMA模式)
+*   **配置项**: 在`modbus_config.h`中设置`MODBUS_USE_DMA_TX`
+*   **可选值**:
+    - `0` (默认): **阻塞模式** - 简单可靠，CPU在发送期间等待
+    - `1`: **DMA模式** - 释放CPU，发送期间可执行其他任务
+*   **选择建议**:
+    - 简单应用或调试阶段: 使用阻塞模式 (0)
+    - 实时性要求高: 使用DMA模式 (1)
+*   **DMA模式要求**:
+    - 在CubeMX中配置USART TX DMA
+    - 在main.c中添加`HAL_UART_TxCpltCallback`回调 (见下方示例)
+
+#### main.c 示例 - 阻塞模式 (默认)
+```c
+/* USER CODE BEGIN 4 */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
+    Modbus_RxCpltCallback(huart, Size);
+}
+/* USER CODE END 4 */
+```
+
+#### main.c 示例 - DMA模式
+```c
+/* USER CODE BEGIN 4 */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
+    Modbus_RxCpltCallback(huart, Size);
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+    Modbus_TxCpltCallback(huart);  // RS485方向控制必须
+}
+/* USER CODE END 4 */
+```
+
 ### 中断优先级
 *   Modbus 通信依赖 UART 中断
 *   请确保 UART 中断优先级设置合理，避免被其他高优先级中断阻塞

@@ -138,6 +138,26 @@ void Modbus_RxCpltCallback(UART_HandleTypeDef *huart, uint16_t Size) {
     }
 }
 
+#if MODBUS_USE_DMA_TX == 1
+/**
+ * @brief   UART发送完成回调 (DMA模式专用)
+ * @param   huart   UART句柄指针
+ * @note    需在HAL_UART_TxCpltCallback中调用此函数
+ *          用于DMA发送完成后切换RS485方向
+ */
+void Modbus_TxCpltCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == hmodbus.huart->Instance) {
+        #if MODBUS_USE_RS485 == 1
+            /* DMA发送完成，切换RS485为接收模式
+             * 注意: DMA完成中断时数据已全部移入发送缓冲，
+             * 但需等待TC标志确保最后一个字节完全发出 */
+            while(__HAL_UART_GET_FLAG(hmodbus.huart, UART_FLAG_TC) == RESET);
+            RS485_RX_ENABLE();
+        #endif
+    }
+}
+#endif /* MODBUS_USE_DMA_TX */
+
 /* ============================================================================
  *                              主处理函数
  * ============================================================================ */
@@ -457,7 +477,10 @@ void Modbus_Process(void) {
 /**
  * @brief   发送Modbus响应帧
  * @param   len   数据部分长度(不含CRC)
- * @note    超时时间根据波特率和数据长度动态计算，避免低波特率发送失败
+ * @note    支持两种发送模式:
+ *          - 阻塞模式: 简单可靠，超时时间动态计算
+ *          - DMA模式: 释放CPU，发送完成后由回调切换RS485方向
+ *          通过 MODBUS_USE_DMA_TX 宏切换
  */
 static void Modbus_SendResponse(uint16_t len) {
     /* 计算并追加CRC校验码 */
@@ -466,7 +489,17 @@ static void Modbus_SendResponse(uint16_t len) {
     hmodbus.tx_buf[len + 1] = (crc >> 8) & 0xFF;
     uint16_t total_len = len + 2;
 
-    /* 动态计算发送超时时间 (ms)
+    /* RS485方向控制: 切换为发送模式 */
+    #if MODBUS_USE_RS485 == 1
+        RS485_TX_ENABLE();
+    #endif
+
+#if MODBUS_USE_DMA_TX == 1
+    /* DMA模式: 非阻塞发送，释放CPU
+     * RS485方向切换在 Modbus_TxCpltCallback 中处理 */
+    HAL_UART_Transmit_DMA(hmodbus.huart, hmodbus.tx_buf, total_len);
+#else
+    /* 阻塞模式: 动态计算超时时间 (ms)
      * 公式: timeout = (字节数 * 10位 * 1000ms) / 波特率 + 安全余量
      * 10位 = 1起始位 + 8数据位 + 1停止位
      * 安全余量: +50ms 或 +10% (取较大值) */
@@ -476,11 +509,6 @@ static void Modbus_SendResponse(uint16_t len) {
     
     /* 确保最小超时时间为100ms */
     if (timeout < 100) timeout = 100;
-
-    /* RS485方向控制: 切换为发送模式 */
-    #if MODBUS_USE_RS485 == 1
-        RS485_TX_ENABLE();
-    #endif
 
     /* 阻塞式发送，确保数据完整发出
      * 超时时间动态计算，不会因低波特率导致发送失败 */
@@ -493,6 +521,7 @@ static void Modbus_SendResponse(uint16_t len) {
         while(__HAL_UART_GET_FLAG(hmodbus.huart, UART_FLAG_TC) == RESET);
         RS485_RX_ENABLE();
     #endif
+#endif
 }
 
 /**
