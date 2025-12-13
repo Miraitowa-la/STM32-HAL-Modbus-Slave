@@ -8,8 +8,8 @@ This project provides two major versions. Choose the one that best fits your nee
 
 | Version | Status | Description |
 |---------|--------|-------------|
-| [**V1.X**](V1_0/README.md) | Stable | Classic architecture, production-ready, actively maintained |
-| [**V2.X**](V2_0/README.md) | Development | New architecture, enhanced extensibility (Coming Soon) |
+| [**V1.X**](V1_0/README.md) | Stable | Classic architecture, production-ready, single instance |
+| [**V2.X**](V2_0/README.md) | Stable | Multi-instance support, runtime configuration, data source decoupling |
 
 ### V1.X - Stable Version
 
@@ -27,11 +27,17 @@ A mature and stable Modbus RTU slave implementation with the following features:
 
 **Documentation**: [English](V1_0/README.md) | [简体中文](V1_0/README-zh_CN.md)
 
-### V2.X - Development Version
+### V2.X - Multi-Instance Version
 
-A completely redesigned Modbus slave library with a new architecture for better extensibility and more advanced features.
+A completely redesigned Modbus slave library with OOP-C style architecture:
 
-**Status**: Under Development
+- **Multi-Instance Support**: Run multiple independent Modbus slaves on different UARTs
+- **Runtime Configuration**: All settings passed via initialization, no static macros
+- **Data Source Decoupling**: Multiple instances can share one data source
+- **Callback Mechanism**: Custom function code 0x64 via application callbacks
+- All V1.X features preserved (ping-pong buffer, dynamic timeout, CRC options, DMA/blocking)
+
+**Status**: Stable
 
 **Documentation**: [English](V2_0/README.md) | [简体中文](V2_0/README-zh_CN.md)
 
@@ -53,8 +59,8 @@ Welcome to submit Issues and Pull Requests!
 
 | 版本 | 状态 | 说明 |
 |------|------|------|
-| [**V1.X**](V1_0/README-zh_CN.md) | 稳定版 | 经典架构，可用于生产环境，持续维护中 |
-| [**V2.X**](V2_0/README-zh_CN.md) | 开发中 | 全新架构，增强可扩展性（敬请期待） |
+| [**V1.X**](V1_0/README-zh_CN.md) | 稳定版 | 经典架构，可用于生产环境，单实例 |
+| [**V2.X**](V2_0/README-zh_CN.md) | 稳定版 | 多实例支持，运行时配置，数据源解耦 |
 
 ### V1.X - 稳定版本
 
@@ -72,11 +78,17 @@ Welcome to submit Issues and Pull Requests!
 
 **文档**: [English](V1_0/README.md) | [简体中文](V1_0/README-zh_CN.md)
 
-### V2.X - 开发版本
+### V2.X - 多实例版本
 
-全新架构设计的 Modbus 从机库，提供更好的可扩展性和更多高级功能。
+采用 OOP-C 风格全新架构设计的 Modbus 从机库：
 
-**状态**: 开发中
+- **多实例支持**: 可在不同 UART 上同时运行多个独立的 Modbus 从站
+- **运行时配置**: 所有设置通过初始化传入，无需静态宏定义
+- **数据源解耦**: 多个实例可共享同一份数据源
+- **回调机制**: 自定义功能码 0x64 通过应用层回调实现
+- 保留 V1.X 所有特性（乒乓缓冲、动态超时、CRC可选、DMA/阻塞）
+
+**状态**: 实验版
 
 **文档**: [English](V2_0/README.md) | [简体中文](V2_0/README-zh_CN.md)
 
